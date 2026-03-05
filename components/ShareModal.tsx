@@ -32,13 +32,27 @@ export function ShareModal({ isOpen, onClose, siteId, siteUrl }: ShareModalProps
 
   const fetchGuests = async () => {
     setIsLoading(true);
-    const { data, error } = await listGuests(siteId);
-    if (error) {
-      toast.error(error);
-    } else {
-      setGuests(data);
+    try {
+      const { data, error } = await Promise.race([
+        listGuests(siteId),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 10_000)
+        ),
+      ]);
+      if (error) {
+        toast.error(error);
+      } else {
+        setGuests(data);
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message === 'timeout') {
+        toast.error('Failed to load guests. Please try again.');
+      } else {
+        toast.error('Failed to load guests.');
+      }
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   const handleInvite = async (e: React.FormEvent) => {
@@ -46,47 +60,81 @@ export function ShareModal({ isOpen, onClose, siteId, siteUrl }: ShareModalProps
     if (!email.trim()) return;
 
     setIsInviting(true);
-    const { data, error } = await addGuest(siteId, email);
+    try {
+      const addGuestWithTimeout = () =>
+        Promise.race([
+          addGuest(siteId, email),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('timeout')), 15_000)
+          ),
+        ]);
+      let data: SiteShare | null = null;
+      let error: string | null = null;
+      try {
+        const result = await addGuestWithTimeout();
+        data = result.data;
+        error = result.error;
+      } catch (err) {
+        if (err instanceof Error && err.message === 'timeout') {
+          toast.error('Request timed out. Please try again.');
+          return;
+        }
+        throw err;
+      }
 
-    if (error) {
-      toast.error(error);
-      setIsInviting(false);
-      return;
-    }
+      if (error) {
+        toast.error(error);
+        return;
+      }
 
-    if (data) {
-      setGuests((prev) => [...prev, data]);
-      setEmail('');
+      if (data) {
+        setGuests((prev) => [...prev, data]);
+        setEmail('');
 
-      const { data: { session } } = await supabase.auth.getSession();
-      const res = await fetch('/api/send-invite', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(session?.access_token && {
-            Authorization: `Bearer ${session.access_token}`,
-          }),
-        },
-        body: JSON.stringify({
-          siteId,
-          guestEmail: data.guest_email,
-          siteUrl,
-        }),
-      });
+        const { data: { session } } = await supabase.auth.getSession();
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 15_000);
 
-      if (res.ok) {
-        toast.success(`Invite sent to ${data.guest_email}`);
-      } else {
-        const err = await res.json().catch(() => ({}));
-        toast.success(`${data.guest_email} added to the project.`, {
-          description: 'Email could not be sent. They can sign in to see shared projects.',
-        });
-        if (res.status !== 503) {
-          console.warn('send-invite failed:', err);
+        try {
+          const res = await fetch('/api/send-invite', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(session?.access_token && {
+                Authorization: `Bearer ${session.access_token}`,
+              }),
+            },
+            body: JSON.stringify({
+              siteId,
+              guestEmail: data.guest_email,
+              siteUrl,
+            }),
+            signal: controller.signal,
+          });
+          clearTimeout(timeoutId);
+
+          if (res.ok) {
+            toast.success(`Invite sent to ${data.guest_email}`);
+          } else {
+            const err = await res.json().catch(() => ({}));
+            toast.success(`${data.guest_email} added to the project.`, {
+              description: 'Email could not be sent. They can sign in to see shared projects.',
+            });
+            if (res.status !== 503) {
+              console.warn('send-invite failed:', err);
+            }
+          }
+        } catch (fetchErr) {
+          clearTimeout(timeoutId);
+          toast.success(`${data.guest_email} added to the project.`, {
+            description: 'Email could not be sent. They can sign in to see shared projects.',
+          });
+          console.warn('send-invite error:', fetchErr);
         }
       }
+    } finally {
+      setIsInviting(false);
     }
-    setIsInviting(false);
   };
 
   const handleRemove = async (shareId: string, guestEmail: string) => {
