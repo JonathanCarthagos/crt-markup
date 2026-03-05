@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowRight, MessageSquare, Users, Share2, Zap } from 'lucide-react';
 import Image from 'next/image';
@@ -20,6 +20,10 @@ export default function Home() {
   const [showAuthComponent, setShowAuthComponent] = useState(false);
   const [projectCount, setProjectCount] = useState(0);
   const [showLimitModal, setShowLimitModal] = useState(false);
+
+  // Tracks the URL the user was trying to review when they hit "Start Review" without being logged in.
+  // After login, onAuthStateChange reads this ref to redirect to the editor instead of the dashboard.
+  const pendingUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (typeof window !== "undefined" && window.location.hash) {
@@ -64,7 +68,14 @@ export default function Home() {
         if (!profile && fullName) {
           await supabase.from('profiles').insert({ user_id: uid, name: fullName });
         }
-        router.replace('/dashboard');
+
+        if (pendingUrlRef.current) {
+          const targetUrl = pendingUrlRef.current;
+          pendingUrlRef.current = null;
+          router.replace(`/editor?url=${encodeURIComponent(targetUrl)}`);
+        } else {
+          router.replace('/dashboard');
+        }
       }
     });
 
@@ -76,18 +87,23 @@ export default function Home() {
     
     if (!url.trim()) return;
 
-    if (userId && projectCount >= FREE_PROJECT_LIMIT) {
-      setShowLimitModal(true);
-      return;
-    }
-
-    setIsLoading(true);
-
     let normalizedUrl = url.trim();
     if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
       normalizedUrl = `https://${normalizedUrl}`;
     }
 
+    if (!userId) {
+      pendingUrlRef.current = normalizedUrl;
+      setShowAuthComponent(true);
+      return;
+    }
+
+    if (projectCount >= FREE_PROJECT_LIMIT) {
+      setShowLimitModal(true);
+      return;
+    }
+
+    setIsLoading(true);
     window.location.href = `/editor?url=${encodeURIComponent(normalizedUrl)}`;
   };
 
@@ -138,7 +154,7 @@ export default function Home() {
           The Fastest Way to Approve Web Projects
         </h1>
         <p className="text-xl text-gray-600 mb-12 max-w-2xl mx-auto">
-          Enter any URL and start annotating instantly — no sign-up required. Sign in to save and share your work.
+          A collaborative space for agencies and clients. Collect precise feedback directly on the live site without the chaos.
         </p>
 
         {/* URL Input Form */}
@@ -180,11 +196,11 @@ export default function Home() {
         </form>
 
         <p className="text-sm text-gray-500">
-          No account needed to start.{' '}
+          Sign in once and keep all your comments synced.{' '}
           <button onClick={() => setShowAuthComponent(true)} className="underline hover:opacity-80 transition-opacity" style={{ color: '#FE4004' }}>
             Sign in
           </button>{' '}
-          to save your projects and collaborate.
+          to start.
         </p>
       </section>
 

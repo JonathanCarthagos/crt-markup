@@ -10,8 +10,6 @@ import { supabase } from '@/lib/supabase';
 import { FREE_PROJECT_LIMIT } from '@/lib/constants';
 import { UserMenu } from '@/components/user-menu';
 import { ShareModal } from '@/components/ShareModal';
-import { Auth } from '@/components/ui/auth-form-1';
-import { saveAnonUrl, getAnonComments, saveAnonComment, clearAnonSession } from '@/lib/anon-session';
 
 function EditorContent() {
   const searchParams = useSearchParams();
@@ -33,10 +31,6 @@ function EditorContent() {
   const [userId, setUserId] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState(true);
   const [shareOpen, setShareOpen] = useState(false);
-  const [isAnonymous, setIsAnonymous] = useState(false);
-  const isAnonymousRef = useRef(false);
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [isMigrating, setIsMigrating] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isSavingComment, setIsSavingComment] = useState(false);
   const [limitReached, setLimitReached] = useState(false);
@@ -47,19 +41,14 @@ function EditorContent() {
     scrollY: 0,
   });
 
-  // Keep ref in sync so onAuthStateChange callback always reads current value
-  isAnonymousRef.current = isAnonymous;
-
   const commentsForViewport = comments.filter((comment) => !comment.viewport || comment.viewport === viewport);
 
-  // Count comments by status
   const activeCount = commentsForViewport.filter(c => c.status === 'open').length;
   const resolvedCount = commentsForViewport.filter(c => c.status === 'resolved').length;
   const filteredComments = commentsForViewport
     .filter((c) => (activeTab === 'active' ? c.status === 'open' : c.status === 'resolved'))
     .sort((a, b) => (a.comment_number || 0) - (b.comment_number || 0));
 
-  // Resolve current auth session from Supabase.
   useEffect(() => {
     const savedName = localStorage.getItem('carthagos_user_name');
     if (savedName) {
@@ -71,14 +60,12 @@ function EditorContent() {
     const bootstrapAuth = async () => {
       const { data, error } = await supabase.auth.getSession();
       if (error) {
-        setIsAnonymous(true);
         setIsBootstrapping(false);
         return;
       }
 
       const sessionUser = data.session?.user ?? null;
       if (!sessionUser) {
-        setIsAnonymous(true);
         setIsBootstrapping(false);
         return;
       }
@@ -94,48 +81,21 @@ function EditorContent() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      const uid = session?.user?.id ?? null;
-      setUserId(uid);
-
-      // Use ref to avoid stale closure — isAnonymousRef always reflects current state
-      if (uid && isAnonymousRef.current && url) {
-        setIsAnonymous(false);
-        setShowAuthModal(false);
-        setIsMigrating(true);
-        const anonComments = getAnonComments();
-        await migrateAnonSession(uid, url, anonComments);
-        setIsMigrating(false);
-        // NOTE: do NOT call setIsBootstrapping(true) here.
-        // The loadSiteAndComments effect is already triggered by the userId change
-        // above and manages isBootstrapping on its own. Calling setIsBootstrapping(true)
-        // after the await creates a race condition where it overwrites the false
-        // already set by loadSiteAndComments, leaving the page stuck loading forever.
-      }
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserId(session?.user?.id ?? null);
     });
 
     return () => {
       subscription.unsubscribe();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userName]);
 
-  // Load or create site record and then fetch comments from Supabase.
   useEffect(() => {
     const loadSiteAndComments = async () => {
-      if (!url) return;
-
-      // Anonymous mode: load from localStorage only
-      if (!userId) {
-        saveAnonUrl(url);
-        setComments(getAnonComments());
-        setIsBootstrapping(false);
-        return;
-      }
+      if (!url || !userId) return;
 
       setIsBootstrapping(true);
 
-      // 1. Try as owner
       const { data: existingSite } = await supabase
         .from('sites')
         .select('id')
@@ -146,7 +106,6 @@ function EditorContent() {
       let currentSiteId: string | null = (existingSite?.id as string | undefined) ?? null;
       let ownerMode = true;
 
-      // 2. Not an owner — check if this user is a guest for a site with this URL
       if (!currentSiteId) {
         const { data: guestShares } = await supabase
           .from('site_shares')
@@ -230,10 +189,8 @@ function EditorContent() {
     loadSiteAndComments();
   }, [url, userId]);
 
-  // Listen to iframe messages (click and scroll)
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      // Handle scroll updates from iframe
       if (event.data.type === 'CARTHAGOS_SCROLL') {
         const { scrollX, scrollY, docWidth, docHeight } = event.data.data;
         setIframeDoc({
@@ -244,11 +201,9 @@ function EditorContent() {
         });
       }
       
-      // Handle click events from iframe
       if (event.data.type === 'CARTHAGOS_CLICK') {
         const { x, y, selector, docWidth, docHeight } = event.data.data;
         
-        // Update iframe dimensions
         if (docWidth && docHeight) {
           setIframeDoc(prev => ({
             ...prev,
@@ -259,7 +214,6 @@ function EditorContent() {
         
         setPendingClick({ x, y, selector });
         
-        // Check if user has a name saved
         if (!userName) {
           setShowNameModal(true);
         } else {
@@ -281,7 +235,6 @@ function EditorContent() {
     localStorage.setItem('carthagos_user_name', name);
     setShowNameModal(false);
     setTempUserName('');
-    // Now show the comment modal
     if (pendingClick) {
       setIsAddingComment(true);
     }
@@ -294,42 +247,12 @@ function EditorContent() {
   };
 
   const handleSaveComment = async () => {
-    if (!pendingClick || !newCommentContent.trim()) return;
+    if (!pendingClick || !newCommentContent.trim() || !siteId || !userId) {
+      return;
+    }
 
     setIsSavingComment(true);
 
-    // Anonymous mode: save to localStorage only
-    if (!userId) {
-      const maxNumber = comments.length > 0
-        ? Math.max(...comments.map(c => c.comment_number || 0))
-        : 0;
-      const anonComment: Comment = {
-        id: `anon_${Date.now()}`,
-        position_x: pendingClick.x,
-        position_y: pendingClick.y,
-        selector: pendingClick.selector,
-        content: newCommentContent.trim(),
-        status: 'open',
-        author_name: userName || 'Anonymous',
-        comment_number: maxNumber + 1,
-        viewport,
-        timestamp: Date.now(),
-      };
-      setComments(prev => [...prev, anonComment]);
-      saveAnonComment(anonComment);
-      setNewCommentContent('');
-      setPendingClick(null);
-      setIsAddingComment(false);
-      setIsSavingComment(false);
-      return;
-    }
-
-    if (!siteId) {
-      setIsSavingComment(false);
-      return;
-    }
-
-    // Get the next comment number
     const maxNumber = comments.length > 0
       ? Math.max(...comments.map(c => c.comment_number || 0))
       : 0;
@@ -395,15 +318,12 @@ function EditorContent() {
     const comment = comments.find(c => c.id === commentId);
     if (!comment) return;
     
-    // Always select the comment (don't toggle off on same click)
     setSelectedComment(comment.id);
     
-    // Switch to the correct viewport if needed
     if (comment.viewport && comment.viewport !== viewport) {
       setViewport(comment.viewport);
     }
     
-    // Send scroll command to iframe after a short delay to allow viewport change
     setTimeout(() => {
       if (iframeRef.current?.contentWindow) {
         iframeRef.current.contentWindow.postMessage({
@@ -415,7 +335,6 @@ function EditorContent() {
         }, '*');
       }
       
-      // Add highlight effect to the pin after scroll
       setTimeout(() => {
         const pinElement = document.querySelector(`[data-comment-id="${comment.id}"]`) as HTMLElement;
         if (pinElement) {
@@ -461,57 +380,6 @@ function EditorContent() {
     }
   };
 
-  const handleGoogleSignIn = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: { redirectTo: window.location.href },
-    });
-    if (error) throw error;
-  };
-
-  const migrateAnonSession = async (uid: string, siteUrl: string, anonComments: Comment[]) => {
-    const { count } = await supabase
-      .from('sites')
-      .select('*', { count: 'exact', head: true })
-      .eq('created_by', uid);
-
-    if ((count ?? 0) >= FREE_PROJECT_LIMIT) {
-      clearAnonSession();
-      return;
-    }
-
-    let { data: existingSite } = await supabase
-      .from('sites')
-      .select('id')
-      .eq('url', siteUrl)
-      .eq('created_by', uid)
-      .maybeSingle();
-
-    if (!existingSite) {
-      const { data: newSite } = await supabase
-        .from('sites')
-        .insert({ url: siteUrl, created_by: uid })
-        .select('id')
-        .single();
-      existingSite = newSite;
-    }
-
-    if (!existingSite) return;
-
-    if (anonComments.length > 0) {
-      await supabase.from('comments').insert(
-        anonComments.map(({ id: _id, site_id: _sid, ...rest }) => ({
-          ...rest,
-          site_id: existingSite!.id,
-          created_by: uid,
-        }))
-      );
-    }
-
-    clearAnonSession();
-    setSiteId(existingSite.id);
-  };
-
   if (!url) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -531,6 +399,28 @@ function EditorContent() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-10 w-10 border-b-2 mx-auto mb-3" style={{ borderColor: '#FE4004' }}></div>
           <p className="text-gray-600">Loading project...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!userId) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center bg-white p-8 rounded-xl border border-gray-200 shadow-sm max-w-md">
+          <h1 className="text-2xl font-normal mb-3 text-gray-900" style={{ fontWeight: 400 }}>
+            Sign in required
+          </h1>
+          <p className="text-gray-600 mb-6">
+            You need to sign in to review websites and save your comments.
+          </p>
+          <a
+            href="/"
+            className="inline-flex items-center px-5 py-3 text-white rounded-lg hover:opacity-80 transition-opacity"
+            style={{ backgroundColor: '#FE4004' }}
+          >
+            Go back to home
+          </a>
         </div>
       </div>
     );
@@ -560,30 +450,19 @@ function EditorContent() {
 
   const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
 
+  // Clamp comment modal position so it stays visible inside the canvas
+  const getCommentModalStyle = (click: { x: number; y: number }): React.CSSProperties => {
+    const clampedTop = Math.max(15, Math.min(click.y, 80));
+    const clampedLeft = Math.max(20, Math.min(click.x, 80));
+    return {
+      left: `${clampedLeft}%`,
+      top: `${clampedTop}%`,
+      transform: 'translate(-50%, -50%)',
+    };
+  };
+
   return (
     <div className="h-screen flex flex-col bg-gray-100">
-      {/* Anonymous / migrating banner */}
-      {isAnonymous && !isMigrating && (
-        <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 flex items-center justify-between">
-          <span className="text-xs text-amber-800">
-            You&apos;re in <strong>preview mode</strong> — your annotations are saved locally.{' '}
-            Sign in to keep them forever and share with clients.
-          </span>
-          <button
-            onClick={() => setShowAuthModal(true)}
-            className="text-xs font-semibold ml-4 whitespace-nowrap hover:opacity-80 transition-opacity"
-            style={{ color: '#FE4004' }}
-          >
-            Sign in →
-          </button>
-        </div>
-      )}
-      {isMigrating && (
-        <div className="bg-blue-50 border-b border-blue-200 px-6 py-2 text-xs text-blue-800 text-center">
-          Saving your annotations to your account…
-        </div>
-      )}
-
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -615,16 +494,7 @@ function EditorContent() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {isAnonymous ? (
-            <button
-              onClick={() => setShowAuthModal(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium hover:opacity-90 transition-opacity"
-              style={{ backgroundColor: '#FE4004' }}
-            >
-              <Share2 className="w-4 h-4" />
-              Sign in to Share
-            </button>
-          ) : isOwner && siteId ? (
+          {isOwner && siteId ? (
             <button
               onClick={() => setShareOpen(true)}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium hover:opacity-90 transition-opacity"
@@ -634,7 +504,7 @@ function EditorContent() {
               Share
             </button>
           ) : null}
-          {!isAnonymous && <UserMenu />}
+          <UserMenu />
         </div>
       </header>
 
@@ -645,15 +515,6 @@ function EditorContent() {
           siteId={siteId}
           siteUrl={url}
         />
-      )}
-
-      {showAuthModal && (
-        <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
-          onClick={(e) => { if (e.target === e.currentTarget) setShowAuthModal(false); }}
-        >
-          <Auth onClose={() => setShowAuthModal(false)} onGoogleSignIn={handleGoogleSignIn} />
-        </div>
       )}
 
       {/* Main Content */}
@@ -678,47 +539,33 @@ function EditorContent() {
                 id="preview-iframe"
               />
               
-              {/* Comment pins - positioned relative to iframe document, adjusted for scroll */}
+              {/* Comment pins */}
               {comments
                 .filter((comment) => {
-                  // Only show pins for the current viewport
-                  // If comment has no viewport set, show it (backwards compatibility)
                   if (!comment.viewport) return true;
                   return comment.viewport === viewport;
                 })
                 .map((comment) => {
-                // Get canvas wrapper dimensions (same as iframe viewport)
                 const wrapperWidth = canvasWrapperRef.current?.offsetWidth || 1;
                 const wrapperHeight = canvasWrapperRef.current?.offsetHeight || 1;
-                
-                // If we have iframe document info, calculate proper position
-                // The comment position is stored as % of the TOTAL document (including scrollable area)
-                // We need to convert it to pixels in the VISIBLE viewport
                 
                 let canvasX: number;
                 let canvasY: number;
                 
                 if (iframeDoc.width > 0 && iframeDoc.height > 0) {
-                  // Calculate absolute position in the iframe document (in pixels)
                   const absoluteX = (comment.position_x / 100) * iframeDoc.width;
                   const absoluteY = (comment.position_y / 100) * iframeDoc.height;
                   
-                  // Adjust for current scroll position to get viewport-relative position (in pixels)
-                  // This gives us the position relative to what's currently visible in the iframe
                   const viewportX = absoluteX - iframeDoc.scrollX;
                   const viewportY = absoluteY - iframeDoc.scrollY;
                   
-                  // Scale from iframe viewport pixels to canvas wrapper pixels
-                  // (they should be the same size, but just in case)
                   canvasX = viewportX;
                   canvasY = viewportY;
                 } else {
-                  // Fallback: use percentage of canvas wrapper
                   canvasX = (comment.position_x / 100) * wrapperWidth;
                   canvasY = (comment.position_y / 100) * wrapperHeight;
                 }
                 
-                // Pin is visible if within canvas bounds (with some margin for the pin itself)
                 const isVisible = canvasX >= -20 && canvasX <= wrapperWidth + 20 && canvasY >= -20 && canvasY <= wrapperHeight + 20;
                 
                 if (!isVisible) return null;
@@ -754,7 +601,6 @@ function EditorContent() {
                     </span>
                   </div>
                   
-                  {/* Tooltip - show on hover or when selected */}
                   {(hoveredComment === comment.id || selectedComment === comment.id) && (
                     <div className="absolute top-10 left-1/2 transform -translate-x-1/2 bg-white rounded-lg shadow-xl p-3 min-w-[200px] z-50 border border-gray-200 pointer-events-auto">
                       <div className="flex items-start justify-between gap-2 mb-2">
@@ -804,15 +650,11 @@ function EditorContent() {
                 );
               })}
 
-              {/* New comment modal */}
+              {/* New comment modal — clamped to stay visible */}
               {isAddingComment && pendingClick && (
                 <div
                   className="absolute bg-white rounded-lg shadow-xl p-4 min-w-[300px] z-50 border border-gray-200"
-                  style={{
-                    left: `${pendingClick.x}%`,
-                    top: `${pendingClick.y}%`,
-                    transform: 'translate(-50%, -50%)',
-                  }}
+                  style={getCommentModalStyle(pendingClick)}
                 >
                   <h3 className="font-semibold mb-2 text-gray-900" style={{ fontWeight: 400 }}>New Comment</h3>
                   <textarea
@@ -863,7 +705,7 @@ function EditorContent() {
                   <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: '#FE4004' }}>
                     <User className="w-5 h-5 text-white" />
                   </div>
-                  <h2 className="text-xl font-normal text-gray-900" style={{ fontWeight: 400 }}>What's your name?</h2>
+                  <h2 className="text-xl font-normal text-gray-900" style={{ fontWeight: 400 }}>What&apos;s your name?</h2>
                 </div>
                 <button
                   onClick={handleCancelName}
@@ -1059,7 +901,6 @@ function EditorContent() {
                     </div>
                   </div>
                 ))}
-                {/* Empty state for filtered view */}
                 {filteredComments.length === 0 && (
                   <div className="text-center text-gray-500 mt-8">
                     <p className="text-sm">
