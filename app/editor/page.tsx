@@ -34,6 +34,7 @@ function EditorContent() {
   const [isOwner, setIsOwner] = useState(true);
   const [shareOpen, setShareOpen] = useState(false);
   const [isAnonymous, setIsAnonymous] = useState(false);
+  const isAnonymousRef = useRef(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
@@ -45,6 +46,9 @@ function EditorContent() {
     scrollX: 0,
     scrollY: 0,
   });
+
+  // Keep ref in sync so onAuthStateChange callback always reads current value
+  isAnonymousRef.current = isAnonymous;
 
   const commentsForViewport = comments.filter((comment) => !comment.viewport || comment.viewport === viewport);
 
@@ -94,15 +98,19 @@ function EditorContent() {
       const uid = session?.user?.id ?? null;
       setUserId(uid);
 
-      if (uid && isAnonymous && url) {
+      // Use ref to avoid stale closure — isAnonymousRef always reflects current state
+      if (uid && isAnonymousRef.current && url) {
         setIsAnonymous(false);
         setShowAuthModal(false);
         setIsMigrating(true);
         const anonComments = getAnonComments();
         await migrateAnonSession(uid, url, anonComments);
         setIsMigrating(false);
-        // Reload site and comments from Supabase after migration
-        setIsBootstrapping(true);
+        // NOTE: do NOT call setIsBootstrapping(true) here.
+        // The loadSiteAndComments effect is already triggered by the userId change
+        // above and manages isBootstrapping on its own. Calling setIsBootstrapping(true)
+        // after the await creates a race condition where it overwrites the false
+        // already set by loadSiteAndComments, leaving the page stuck loading forever.
       }
     });
 
