@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { X, UserPlus, Trash2, Mail, Users } from 'lucide-react';
 import { toast } from 'sonner';
 import { listGuests, addGuest, removeGuest } from '@/actions/share';
+import { supabase } from '@/lib/supabase';
 import type { SiteShare } from '@/types';
 
 interface ShareModalProps {
@@ -49,10 +50,41 @@ export function ShareModal({ isOpen, onClose, siteId, siteUrl }: ShareModalProps
 
     if (error) {
       toast.error(error);
-    } else if (data) {
+      setIsInviting(false);
+      return;
+    }
+
+    if (data) {
       setGuests((prev) => [...prev, data]);
       setEmail('');
-      toast.success(`Invite sent to ${data.guest_email}`);
+
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/api/send-invite', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token && {
+            Authorization: `Bearer ${session.access_token}`,
+          }),
+        },
+        body: JSON.stringify({
+          siteId,
+          guestEmail: data.guest_email,
+          siteUrl,
+        }),
+      });
+
+      if (res.ok) {
+        toast.success(`Invite sent to ${data.guest_email}`);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.success(`${data.guest_email} added to the project.`, {
+          description: 'Email could not be sent. They can sign in to see shared projects.',
+        });
+        if (res.status !== 503) {
+          console.warn('send-invite failed:', err);
+        }
+      }
     }
     setIsInviting(false);
   };

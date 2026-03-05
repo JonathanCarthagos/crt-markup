@@ -19,8 +19,8 @@ Este documento descreve tudo que a aplicação **CRT Markup** já faz. Use-o com
 
 - **Landing page** com hero, input de URL e seção de features
 - **Input de URL** para iniciar revisão: aceita URL com ou sem `https://`
-- **Usuário não logado:** botão "Sign In" no header; ao submeter URL, abre modal de autenticação
-- **Usuário logado:** redireciona automaticamente para `/dashboard`
+- **Login obrigatório no Start Review:** usuário não logado que clica "Start Review" → abre modal de auth; após login, redireciona para `/editor?url=...` com a URL que tentou revisar
+- **Usuário logado:** redireciona automaticamente para `/dashboard` ao acessar a home
 - **Logo** clicável: volta para home
 - **Modal de auth** (Sign In / Sign Up / Forgot Password) ao clicar em Sign In
 - **Modal de limite** quando o usuário atinge o limite de projetos (2 no plano free)
@@ -47,12 +47,13 @@ Este documento descreve tudo que a aplicação **CRT Markup** já faz. Use-o com
 ### 3. Editor (`/editor?url=...`)
 
 - **Requer URL** via query param `url`; sem URL mostra mensagem de erro
-- **Requer login**; redireciona para home se não autenticado
+- **Requer login:** se não autenticado, mostra tela "Sign in required" com link para home
 - **Limite de projetos:** bloqueia criação do 3º projeto para usuários free
 - **Preview do site** em iframe via proxy (`/api/proxy?url=...`)
 - **Toggle Desktop/Mobile** para alternar viewport (375px mobile / full desktop)
 - **Comentários:**
   - Clique no site abre modal para adicionar comentário
+  - **Modal de comentário:** posição com clamp (top 15–80%, left 20–80%) para não cortar no topo da tela
   - Pins numerados no canvas (posição em % do documento)
   - Status: `open` (vermelho) ou `resolved` (verde)
   - Sidebar com abas Active / Resolved
@@ -60,6 +61,8 @@ Este documento descreve tudo que a aplicação **CRT Markup** já faz. Use-o com
   - Deletar comentário
   - Ao clicar em um comentário na sidebar, scroll automático no iframe até o pin
 - **Nome do autor:** modal "What's your name?" na primeira vez; salva em `localStorage` e em `author_name` no comentário
+- **Share:** botão Share (apenas para donos do projeto) abre ShareModal para convidar usuários
+- **Guest:** usuário pode acessar projeto compartilhado via `site_shares` (modo leitor, sem botão Share)
 - **Logo** clicável: volta para home
 - **UserMenu** no header (avatar, nome, Dashboard, Sign Out)
 
@@ -99,6 +102,14 @@ Este documento descreve tudo que a aplicação **CRT Markup** já faz. Use-o com
 
 ## API
 
+### `POST /api/send-invite`
+
+- **Envia email de convite** quando um utilizador é adicionado a um projeto via ShareModal
+- **Body:** `{ siteId, guestEmail, siteUrl }`
+- **Auth:** header `Authorization: Bearer <access_token>`
+- **Serviço:** Resend (variável `RESEND_API_KEY`)
+- **Fallback:** se o envio falhar (ex.: API key não configurada), o convite continua na BD e o utilizador vê toast informativo
+
 ### `GET /api/proxy?url=...`
 
 - **Proxy de HTML** para exibir sites em iframe (evita X-Frame-Options)
@@ -120,6 +131,7 @@ Este documento descreve tudo que a aplicação **CRT Markup** já faz. Use-o com
 - **sites:** id, url, created_by, workspace_id, screenshot_url, created_at, updated_at  
   - UNIQUE (url, created_by)
 - **comments:** id, site_id, position_x, position_y, selector, content, status (open/resolved), author_name, comment_number, viewport (desktop/mobile), created_by, timestamps
+- **site_shares:** compartilhamento de projetos com convidados (site_id, guest_user_id, guest_email, role)
 - **profiles:** user_id, name, phone
 - **workspaces / workspace_members:** estrutura presente, ainda não usada no fluxo principal
 
@@ -129,6 +141,11 @@ Este documento descreve tudo que a aplicação **CRT Markup** já faz. Use-o com
 - Políticas para SELECT, INSERT, UPDATE, DELETE em sites e comments
 
 ---
+
+## Regras de negócio e decisões
+
+- **Login obrigatório no Start Review:** não há modo anônimo; evita problemas de loading e simplifica o fluxo
+- **Editor requer sessão:** sem login, mostra tela "Sign in required" (não redireciona automaticamente)
 
 ## Limites e regras de negócio
 
@@ -143,6 +160,7 @@ Este documento descreve tudo que a aplicação **CRT Markup** já faz. Use-o com
 
 - **Auth** (`auth-form-1.tsx`): Sign In, Sign Up, Forgot Password com animações (Framer Motion)
 - **UserMenu** (`user-menu.tsx`): avatar, dropdown com Dashboard e Sign Out
+- **ShareModal** (`ShareModal.tsx`): convidar usuários para projeto (editor)
 - **DropdownMenu** (Radix): usado no UserMenu
 - **Button, Input, Label, Checkbox, Separator, Card** (Shadcn-style)
 
@@ -151,10 +169,12 @@ Este documento descreve tudo que a aplicação **CRT Markup** já faz. Use-o com
 ## Fluxos principais
 
 1. **Novo usuário:** Home → Sign In/Sign Up → Dashboard (redirect)
-2. **Adicionar projeto:** Dashboard → New project → URL → Editor
-3. **Revisar site:** Editor → clicar no site → nome (se necessário) → comentário → salvar
-4. **Gerenciar comentários:** marcar resolvido, reabrir, deletar
-5. **Recuperar senha:** link no email → /reset-password → nova senha → home
+2. **Start Review sem login:** Home → URL → Start Review → modal auth → login → Editor com URL
+3. **Adicionar projeto:** Dashboard → New project → URL → Editor
+4. **Revisar site:** Editor → clicar no site → nome (se necessário) → comentário → salvar
+5. **Gerenciar comentários:** marcar resolvido, reabrir, deletar
+6. **Compartilhar:** Editor → Share → ShareModal → convidar usuário
+7. **Recuperar senha:** link no email → /reset-password → nova senha → home
 
 ---
 
@@ -183,6 +203,7 @@ app/
   api/proxy/route.ts
 components/
   user-menu.tsx
+  ShareModal.tsx
   ui/auth-form-1.tsx
   ui/dropdown-menu.tsx
   ui/button.tsx, input.tsx, ...

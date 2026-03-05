@@ -8,7 +8,8 @@ Este diretorio concentra a documentacao oficial do `CRT Markup`.
 - `architecture.md`: arquitetura tecnica consolidada;
 - `api-contracts.md`: contratos HTTP e `postMessage`;
 - `db-schema.md`: modelo de dados, RLS e regras;
-- `qa-checklists.md`: checklist funcional e de regressao.
+- `qa-checklists.md`: checklist funcional e de regressao;
+- `CONFIG.md`: variáveis de ambiente, deploy e alertas (ex.: domínio customizado).
 
 ## Roadmap por Fase
 
