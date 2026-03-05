@@ -10,6 +10,8 @@ import { supabase } from '@/lib/supabase';
 import { FREE_PROJECT_LIMIT } from '@/lib/constants';
 import { UserMenu } from '@/components/user-menu';
 import { ShareModal } from '@/components/ShareModal';
+import { Auth } from '@/components/ui/auth-form-1';
+import { saveAnonUrl, getAnonComments, saveAnonComment, clearAnonSession } from '@/lib/anon-session';
 
 function EditorContent() {
   const searchParams = useSearchParams();
@@ -31,6 +33,9 @@ function EditorContent() {
   const [userId, setUserId] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState(true);
   const [shareOpen, setShareOpen] = useState(false);
+  const [isAnonymous, setIsAnonymous] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [isMigrating, setIsMigrating] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isSavingComment, setIsSavingComment] = useState(false);
   const [limitReached, setLimitReached] = useState(false);
@@ -62,13 +67,20 @@ function EditorContent() {
     const bootstrapAuth = async () => {
       const { data, error } = await supabase.auth.getSession();
       if (error) {
+        setIsAnonymous(true);
         setIsBootstrapping(false);
         return;
       }
 
       const sessionUser = data.session?.user ?? null;
-      setUserId(sessionUser?.id ?? null);
-      if (!userName && sessionUser?.email) {
+      if (!sessionUser) {
+        setIsAnonymous(true);
+        setIsBootstrapping(false);
+        return;
+      }
+
+      setUserId(sessionUser.id);
+      if (!userName && sessionUser.email) {
         setUserName(sessionUser.email.split('@')[0]);
       }
       setIsBootstrapping(false);
@@ -78,19 +90,41 @@ function EditorContent() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUserId(session?.user?.id ?? null);
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      const uid = session?.user?.id ?? null;
+      setUserId(uid);
+
+      if (uid && isAnonymous && url) {
+        setIsAnonymous(false);
+        setShowAuthModal(false);
+        setIsMigrating(true);
+        const anonComments = getAnonComments();
+        await migrateAnonSession(uid, url, anonComments);
+        setIsMigrating(false);
+        // Reload site and comments from Supabase after migration
+        setIsBootstrapping(true);
+      }
     });
 
     return () => {
       subscription.unsubscribe();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userName]);
 
   // Load or create site record and then fetch comments from Supabase.
   useEffect(() => {
     const loadSiteAndComments = async () => {
-      if (!url || !userId) return;
+      if (!url) return;
+
+      // Anonymous mode: load from localStorage only
+      if (!userId) {
+        saveAnonUrl(url);
+        setComments(getAnonComments());
+        setIsBootstrapping(false);
+        return;
+      }
+
       setIsBootstrapping(true);
 
       // 1. Try as owner
@@ -252,14 +286,43 @@ function EditorContent() {
   };
 
   const handleSaveComment = async () => {
-    if (!pendingClick || !newCommentContent.trim() || !siteId || !userId) {
-      return;
-    }
+    if (!pendingClick || !newCommentContent.trim()) return;
 
     setIsSavingComment(true);
 
+    // Anonymous mode: save to localStorage only
+    if (!userId) {
+      const maxNumber = comments.length > 0
+        ? Math.max(...comments.map(c => c.comment_number || 0))
+        : 0;
+      const anonComment: Comment = {
+        id: `anon_${Date.now()}`,
+        position_x: pendingClick.x,
+        position_y: pendingClick.y,
+        selector: pendingClick.selector,
+        content: newCommentContent.trim(),
+        status: 'open',
+        author_name: userName || 'Anonymous',
+        comment_number: maxNumber + 1,
+        viewport,
+        timestamp: Date.now(),
+      };
+      setComments(prev => [...prev, anonComment]);
+      saveAnonComment(anonComment);
+      setNewCommentContent('');
+      setPendingClick(null);
+      setIsAddingComment(false);
+      setIsSavingComment(false);
+      return;
+    }
+
+    if (!siteId) {
+      setIsSavingComment(false);
+      return;
+    }
+
     // Get the next comment number
-    const maxNumber = comments.length > 0 
+    const maxNumber = comments.length > 0
       ? Math.max(...comments.map(c => c.comment_number || 0))
       : 0;
     const nextNumber = maxNumber + 1;
@@ -390,6 +453,57 @@ function EditorContent() {
     }
   };
 
+  const handleGoogleSignIn = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.href },
+    });
+    if (error) throw error;
+  };
+
+  const migrateAnonSession = async (uid: string, siteUrl: string, anonComments: Comment[]) => {
+    const { count } = await supabase
+      .from('sites')
+      .select('*', { count: 'exact', head: true })
+      .eq('created_by', uid);
+
+    if ((count ?? 0) >= FREE_PROJECT_LIMIT) {
+      clearAnonSession();
+      return;
+    }
+
+    let { data: existingSite } = await supabase
+      .from('sites')
+      .select('id')
+      .eq('url', siteUrl)
+      .eq('created_by', uid)
+      .maybeSingle();
+
+    if (!existingSite) {
+      const { data: newSite } = await supabase
+        .from('sites')
+        .insert({ url: siteUrl, created_by: uid })
+        .select('id')
+        .single();
+      existingSite = newSite;
+    }
+
+    if (!existingSite) return;
+
+    if (anonComments.length > 0) {
+      await supabase.from('comments').insert(
+        anonComments.map(({ id: _id, site_id: _sid, ...rest }) => ({
+          ...rest,
+          site_id: existingSite!.id,
+          created_by: uid,
+        }))
+      );
+    }
+
+    clearAnonSession();
+    setSiteId(existingSite.id);
+  };
+
   if (!url) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -409,28 +523,6 @@ function EditorContent() {
         <div className="text-center">
           <div className="animate-spin rounded-full h-10 w-10 border-b-2 mx-auto mb-3" style={{ borderColor: '#FE4004' }}></div>
           <p className="text-gray-600">Loading project...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isBootstrapping && !userId) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center bg-white p-8 rounded-xl border border-gray-200 shadow-sm max-w-md">
-          <h1 className="text-2xl font-normal mb-3 text-gray-900" style={{ fontWeight: 400 }}>
-            Sign in required
-          </h1>
-          <p className="text-gray-600 mb-6">
-            Sprint 1 now stores projects and comments in Supabase, so you need to sign in first.
-          </p>
-          <a
-            href="/"
-            className="inline-flex items-center px-5 py-3 text-white rounded-lg hover:opacity-80 transition-opacity"
-            style={{ backgroundColor: '#FE4004' }}
-          >
-            Go back to home
-          </a>
         </div>
       </div>
     );
@@ -462,6 +554,28 @@ function EditorContent() {
 
   return (
     <div className="h-screen flex flex-col bg-gray-100">
+      {/* Anonymous / migrating banner */}
+      {isAnonymous && !isMigrating && (
+        <div className="bg-amber-50 border-b border-amber-200 px-6 py-2 flex items-center justify-between">
+          <span className="text-xs text-amber-800">
+            You&apos;re in <strong>preview mode</strong> — your annotations are saved locally.{' '}
+            Sign in to keep them forever and share with clients.
+          </span>
+          <button
+            onClick={() => setShowAuthModal(true)}
+            className="text-xs font-semibold ml-4 whitespace-nowrap hover:opacity-80 transition-opacity"
+            style={{ color: '#FE4004' }}
+          >
+            Sign in →
+          </button>
+        </div>
+      )}
+      {isMigrating && (
+        <div className="bg-blue-50 border-b border-blue-200 px-6 py-2 text-xs text-blue-800 text-center">
+          Saving your annotations to your account…
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -493,7 +607,16 @@ function EditorContent() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {isOwner && siteId && (
+          {isAnonymous ? (
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium hover:opacity-90 transition-opacity"
+              style={{ backgroundColor: '#FE4004' }}
+            >
+              <Share2 className="w-4 h-4" />
+              Sign in to Share
+            </button>
+          ) : isOwner && siteId ? (
             <button
               onClick={() => setShareOpen(true)}
               className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-white text-sm font-medium hover:opacity-90 transition-opacity"
@@ -502,8 +625,8 @@ function EditorContent() {
               <Share2 className="w-4 h-4" />
               Share
             </button>
-          )}
-          <UserMenu />
+          ) : null}
+          {!isAnonymous && <UserMenu />}
         </div>
       </header>
 
@@ -514,6 +637,15 @@ function EditorContent() {
           siteId={siteId}
           siteUrl={url}
         />
+      )}
+
+      {showAuthModal && (
+        <div
+          className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAuthModal(false); }}
+        >
+          <Auth onClose={() => setShowAuthModal(false)} onGoogleSignIn={handleGoogleSignIn} />
+        </div>
       )}
 
       {/* Main Content */}

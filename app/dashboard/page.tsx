@@ -5,18 +5,16 @@ import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
 import {
-  MessageSquare,
-  ExternalLink,
   Plus,
   ArrowRight,
   Globe,
   CheckCircle2,
   AlertCircle,
-  Trash2,
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { FREE_PROJECT_LIMIT } from '@/lib/constants';
 import { UserMenu } from '@/components/user-menu';
+import { ProjectCard } from '@/components/ProjectCard';
 
 interface SiteWithCounts {
   id: string;
@@ -350,100 +348,13 @@ export default function DashboardPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {sites.map((site) => (
-              <div
+              <ProjectCard
                 key={site.id}
-                className="bg-white rounded-xl border border-gray-200 hover:border-gray-300 hover:shadow-sm transition-all group"
-              >
-                {/* Card top - clickable */}
-                <button
-                  onClick={() =>
-                    router.push(
-                      `/editor?url=${encodeURIComponent(site.url)}`,
-                    )
-                  }
-                  className="w-full text-left p-5 pb-3"
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
-                        <Globe className="w-5 h-5 text-gray-400" />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="text-sm font-semibold text-gray-900 truncate">
-                          {formatUrl(site.url)}
-                        </p>
-                        <p className="text-xs text-gray-500 truncate">
-                          {site.url}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
-                      {site.isShared && (
-                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-100">
-                          Shared with me
-                        </span>
-                      )}
-                      <ExternalLink className="w-4 h-4 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </div>
-                  </div>
-
-                  {/* Comment stats */}
-                  <div className="flex items-center gap-4 mt-3">
-                    {site.open_count > 0 && (
-                      <span className="flex items-center gap-1.5 text-xs">
-                        <span
-                          className="w-2 h-2 rounded-full"
-                          style={{ backgroundColor: '#FE4004' }}
-                        />
-                        <span className="text-gray-600">
-                          {site.open_count} open
-                        </span>
-                      </span>
-                    )}
-                    {site.resolved_count > 0 && (
-                      <span className="flex items-center gap-1.5 text-xs">
-                        <span className="w-2 h-2 rounded-full bg-green-500" />
-                        <span className="text-gray-600">
-                          {site.resolved_count} resolved
-                        </span>
-                      </span>
-                    )}
-                    {site.total_comments === 0 && (
-                      <span className="text-xs text-gray-400">
-                        No comments yet
-                      </span>
-                    )}
-                  </div>
-                </button>
-
-                {/* Card footer */}
-                <div className="px-5 py-3 border-t border-gray-100 flex items-center justify-between">
-                  <span className="text-xs text-gray-400">
-                    {formatDate(site.updated_at || site.created_at)}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <span className="flex items-center gap-1 text-xs text-gray-400">
-                      <MessageSquare className="w-3.5 h-3.5" />
-                      {site.total_comments}
-                    </span>
-                    {!site.isShared && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (confirm('Delete this project and all its comments?')) {
-                            handleDeleteSite(site.id);
-                          }
-                        }}
-                        disabled={deletingSiteId === site.id}
-                        className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                        title="Delete project"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
+                site={site}
+                onOpen={() => router.push(`/editor?url=${encodeURIComponent(site.url)}`)}
+                onDelete={site.isShared ? undefined : () => handleDeleteSite(site.id)}
+                isDeleting={deletingSiteId === site.id}
+              />
             ))}
           </div>
         )}

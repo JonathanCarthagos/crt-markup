@@ -76,18 +76,13 @@ export default function Home() {
     
     if (!url.trim()) return;
 
-    if (!userId) {
-      setShowAuthComponent(true);
-      return;
-    }
-
-    if (projectCount >= FREE_PROJECT_LIMIT) {
+    if (userId && projectCount >= FREE_PROJECT_LIMIT) {
       setShowLimitModal(true);
       return;
     }
 
     setIsLoading(true);
-    
+
     let normalizedUrl = url.trim();
     if (!normalizedUrl.startsWith('http://') && !normalizedUrl.startsWith('https://')) {
       normalizedUrl = `https://${normalizedUrl}`;
@@ -143,7 +138,7 @@ export default function Home() {
           The Fastest Way to Approve Web Projects
         </h1>
         <p className="text-xl text-gray-600 mb-12 max-w-2xl mx-auto">
-          A collaborative space for agencies and clients. Collect precise feedback directly on the live site without the chaos.
+          Enter any URL and start annotating instantly — no sign-up required. Sign in to save and share your work.
         </p>
 
         {/* URL Input Form */}
@@ -185,11 +180,11 @@ export default function Home() {
         </form>
 
         <p className="text-sm text-gray-500">
-          Sign in once and keep all your comments synced.{' '}
+          No account needed to start.{' '}
           <button onClick={() => setShowAuthComponent(true)} className="underline hover:opacity-80 transition-opacity" style={{ color: '#FE4004' }}>
             Sign in
           </button>{' '}
-          to start.
+          to save your projects and collaborate.
         </p>
       </section>
 
