@@ -42,9 +42,20 @@ Arquitetura web com Next.js no frontend/backend, Supabase para auth + dados e um
 ## 6) Seguranca
 
 - RLS habilitado em tabelas de dominio;
-- politicas por dono/membro;
-- auth obrigatoria para persistencia;
+- politicas por dono/membro; guests autenticados via `site_shares` tambem podem SELECT/INSERT/UPDATE em `comments`;
+- auth obrigatoria para persistencia (Progressive Disclosure: leitura sem auth via Service Role no endpoint `invite/validate`);
 - proxy com cuidado para links/assets relativos.
+
+## 9) Fluxo de Convite (Progressive Disclosure)
+
+1. dono envia convite → `site_shares` recebe `invite_token` gerado em `addGuest`;
+2. guest recebe email com link `/editor?inviteToken=TOKEN&url=URL`;
+3. editor detecta `inviteToken` sem sessao → chama `GET /api/invite/validate?token=TOKEN` (Service Role, bypass RLS) → carrega site + comments;
+4. guest ve o projeto em modo leitura (sem sessao); welcome toast exibido;
+5. guest clica no canvas → interceptor detecta `!userId && inviteToken` → abre `AuthModal` (emailOnly);
+6. **sign in existente:** `AuthSignIn.onSubmit` → `onAuthSuccess` → `processSilentJoin` (vincula `guest_user_id`) → `setUserId` explicito → fecha modal → abre compositor;
+7. **sign up novo:** `signUp` com `emailRedirectTo=/auth/callback?inviteToken=X&url=Y` → email de confirmacao; callback chama `processSilentJoin` → redireciona para o editor ja autenticado;
+8. `inviteSiteIdRef` no editor cacheia o `siteId` do guest mode → evita race condition quando `loadSiteAndComments` reroda apos login antes de `processSilentJoin` completar.
 
 ## 7) Escalabilidade (curto prazo)
 

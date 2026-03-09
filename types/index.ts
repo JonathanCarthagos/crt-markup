@@ -32,6 +32,7 @@ export interface SiteShare {
   guest_user_id: string | null;
   invited_by: string;
   created_at: string;
+  invite_token?: string | null;
 }
 
 export interface ClickData {

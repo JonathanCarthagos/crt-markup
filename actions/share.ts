@@ -74,15 +74,15 @@ export async function addGuest(
     };
   }
 
-  // Insert the invite.
-  // guest_user_id will be null until the guest registers.
-  // The trigger `on_auth_user_created_link_guest` links it automatically.
+  // Insert the invite with invite_token for Progressive Disclosure flow.
+  const inviteToken = crypto.randomUUID();
   const { data: inserted, error: insertError } = await supabase
     .from('site_shares')
     .insert({
       site_id: siteId,
       guest_email: normalizedEmail,
       invited_by: currentUser.id,
+      invite_token: inviteToken,
     })
     .select('*')
     .single();

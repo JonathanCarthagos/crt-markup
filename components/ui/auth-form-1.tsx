@@ -93,7 +93,7 @@ function mapAuthCode(message: string): FormState["errorCode"] {
 // Main Auth Component
 // --------------------------------
 
-function Auth({ className, onClose, onGoogleSignIn, ...props }: React.ComponentProps<"div"> & { onClose?: () => void; onGoogleSignIn?: () => Promise<void>; }) {
+function Auth({ className, onClose, onAuthSuccess, onGoogleSignIn, emailOnly, emailRedirectTo, ...props }: React.ComponentProps<"div"> & { onClose?: () => void; onAuthSuccess?: () => void | Promise<void>; onGoogleSignIn?: () => Promise<void>; emailOnly?: boolean; emailRedirectTo?: string }) {
   const [state, setState] = React.useState<AuthState>({ view: AuthView.SIGN_IN });
 
   const setView = React.useCallback((view: AuthView) => {
@@ -101,11 +101,12 @@ function Auth({ className, onClose, onGoogleSignIn, ...props }: React.ComponentP
   }, []);
 
   const handleGoogleSignIn = React.useCallback(async () => {
+    if (emailOnly) return;
     if (!onGoogleSignIn) {
       throw new Error("Google login is not enabled.");
     }
     await onGoogleSignIn();
-  }, [onGoogleSignIn]);
+  }, [onGoogleSignIn, emailOnly]);
 
   return (
     <div
@@ -135,6 +136,8 @@ function Auth({ className, onClose, onGoogleSignIn, ...props }: React.ComponentP
                 onSignUp={() => setView(AuthView.SIGN_UP)}
                 onGoogleSignIn={handleGoogleSignIn}
                 onClose={onClose}
+                onAuthSuccess={onAuthSuccess}
+                emailOnly={emailOnly}
               />
             )}
             {state.view === AuthView.SIGN_UP && (
@@ -144,6 +147,9 @@ function Auth({ className, onClose, onGoogleSignIn, ...props }: React.ComponentP
                 onForgotPassword={() => setView(AuthView.FORGOT_PASSWORD)}
                 onGoogleSignIn={handleGoogleSignIn}
                 onClose={onClose}
+                onAuthSuccess={onAuthSuccess}
+                emailOnly={emailOnly}
+                emailRedirectTo={emailRedirectTo}
               />
             )}
             {state.view === AuthView.FORGOT_PASSWORD && (
@@ -281,9 +287,12 @@ interface AuthSignInProps {
   onSignUp: () => void;
   onGoogleSignIn: () => Promise<void>;
   onClose?: () => void;
+  /** Fired only on successful authentication — separate from onClose (X button). */
+  onAuthSuccess?: () => void | Promise<void>;
+  emailOnly?: boolean;
 }
 
-function AuthSignIn({ onForgotPassword, onSignUp, onGoogleSignIn, onClose }: AuthSignInProps) {
+function AuthSignIn({ onForgotPassword, onSignUp, onGoogleSignIn, onClose, onAuthSuccess, emailOnly }: AuthSignInProps) {
   const [formState, setFormState] = React.useState<FormState>({
     isLoading: false,
     error: null,
@@ -310,8 +319,8 @@ function AuthSignIn({ onForgotPassword, onSignUp, onGoogleSignIn, onClose }: Aut
           error: mapAuthError(error.message),
           errorCode: mapAuthCode(error.message),
         }));
-      } else if (onClose) {
-        if (signInData.user?.id) {
+      } else if (signInData.user) {
+        if (signInData.user.id) {
           const fallbackName =
             (signInData.user.user_metadata?.full_name as string | undefined) ||
             signInData.user.email?.split("@")[0] ||
@@ -324,7 +333,9 @@ function AuthSignIn({ onForgotPassword, onSignUp, onGoogleSignIn, onClose }: Aut
             { onConflict: "user_id" }
           );
         }
-        onClose();
+        // Fire success callback first (e.g. processSilentJoin), then close.
+        await onAuthSuccess?.();
+        onClose?.();
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? mapAuthError(err.message) : "An unexpected error occurred";
@@ -427,8 +438,12 @@ function AuthSignIn({ onForgotPassword, onSignUp, onGoogleSignIn, onClose }: Aut
         </Button>
       </AuthForm>
 
-      <AuthSeparator />
-      <AuthSocialButtons isLoading={formState.isLoading} onGoogleSignIn={handleGoogleSignIn} />
+      {!emailOnly && (
+        <>
+          <AuthSeparator />
+          <AuthSocialButtons isLoading={formState.isLoading} onGoogleSignIn={handleGoogleSignIn} />
+        </>
+      )}
 
       <p className="mt-8 text-center text-sm text-muted-foreground">
         No account?{" "}
@@ -454,9 +469,14 @@ interface AuthSignUpProps {
   onForgotPassword: () => void;
   onGoogleSignIn: () => Promise<void>;
   onClose?: () => void;
+  /** Fired only on successful authentication (instant session) — separate from onClose. */
+  onAuthSuccess?: () => void | Promise<void>;
+  emailOnly?: boolean;
+  /** URL para redirecionar após confirmação de email (fluxo de convite) */
+  emailRedirectTo?: string;
 }
 
-function AuthSignUp({ onSignIn, onForgotPassword, onGoogleSignIn, onClose }: AuthSignUpProps) {
+function AuthSignUp({ onSignIn, onForgotPassword, onGoogleSignIn, onClose, onAuthSuccess, emailOnly, emailRedirectTo }: AuthSignUpProps) {
   const [formState, setFormState] = React.useState<FormState>({
     isLoading: false,
     error: null,
@@ -498,6 +518,7 @@ function AuthSignUp({ onSignIn, onForgotPassword, onGoogleSignIn, onClose }: Aut
         password: data.password,
         options: {
           data: { full_name: data.name },
+          ...(emailRedirectTo && { emailRedirectTo }),
         },
       });
       if (error) {
@@ -523,8 +544,9 @@ function AuthSignUp({ onSignIn, onForgotPassword, onGoogleSignIn, onClose }: Aut
           info: "Account created. Please confirm your email before signing in.",
           errorCode: null,
         }));
-      } else if (onClose) {
-        if (signUpData.user?.id) {
+      } else if (signUpData.user) {
+        // Instant session (email confirmation disabled) — treat like sign in.
+        if (signUpData.user.id) {
           await supabase.from("profiles").upsert(
             {
               user_id: signUpData.user.id,
@@ -533,7 +555,9 @@ function AuthSignUp({ onSignIn, onForgotPassword, onGoogleSignIn, onClose }: Aut
             { onConflict: "user_id" }
           );
         }
-        onClose();
+        // Fire success callback first (e.g. processSilentJoin), then close.
+        await onAuthSuccess?.();
+        onClose?.();
       }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "An unexpected error occurred";
@@ -666,8 +690,12 @@ function AuthSignUp({ onSignIn, onForgotPassword, onGoogleSignIn, onClose }: Aut
         </Button>
       </AuthForm>
 
-      <AuthSeparator />
-      <AuthSocialButtons isLoading={formState.isLoading} onGoogleSignIn={handleGoogleSignIn} />
+      {!emailOnly && (
+        <>
+          <AuthSeparator />
+          <AuthSocialButtons isLoading={formState.isLoading} onGoogleSignIn={handleGoogleSignIn} />
+        </>
+      )}
 
       {formState.errorCode === "existing_email" && (
         <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">

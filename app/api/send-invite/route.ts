@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { Resend } from 'resend';
+import { createAdminClient } from '@/lib/supabase-admin';
 
 function getResend() {
   const key = process.env.RESEND_API_KEY;
@@ -43,7 +44,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { siteId, guestEmail, siteUrl } = body;
+    const { siteId, guestEmail, siteUrl, inviteToken } = body;
 
     if (!siteId || !guestEmail || !siteUrl) {
       return NextResponse.json(
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest) {
 
     const { data: share } = await supabase
       .from('site_shares')
-      .select('id')
+      .select('id, invite_token')
       .eq('site_id', siteId)
       .eq('guest_email', normalizedEmail)
       .maybeSingle();
@@ -80,6 +81,30 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       );
     }
+
+    let token = inviteToken ?? (share as { invite_token?: string }).invite_token;
+
+    // Backfill: shares criados antes da migration não têm invite_token.
+    // Geramos um e atualizamos via admin para garantir link correto.
+    if (!token) {
+      try {
+        const newToken = crypto.randomUUID();
+        const admin = createAdminClient();
+        const { error: updateErr } = await admin
+          .from('site_shares')
+          .update({ invite_token: newToken })
+          .eq('id', share.id);
+        if (!updateErr) {
+          token = newToken;
+        }
+      } catch (e) {
+        console.warn('send-invite: failed to backfill invite_token', e);
+      }
+    }
+
+    const inviteLink = token
+      ? `${appUrl}/editor?inviteToken=${encodeURIComponent(token)}&url=${encodeURIComponent(siteUrl)}`
+      : appUrl;
 
     const inviterName =
       user.user_metadata?.full_name ||
@@ -104,7 +129,7 @@ export async function POST(request: NextRequest) {
           </p>
           <p style="margin: 24px 0;">
             <a
-              href="${appUrl}"
+              href="${inviteLink}"
               style="display: inline-block; padding: 12px 24px; background-color: #FE4004; color: white; text-decoration: none; border-radius: 8px; font-weight: 600;"
             >
               Open CRT Markup

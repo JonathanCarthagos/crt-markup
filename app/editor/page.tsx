@@ -10,10 +10,15 @@ import { supabase } from '@/lib/supabase';
 import { FREE_PROJECT_LIMIT } from '@/lib/constants';
 import { UserMenu } from '@/components/user-menu';
 import { ShareModal } from '@/components/ShareModal';
+import { AuthModal } from '@/components/AuthModal';
+import { processSilentJoin } from '@/actions/process-silent-join';
 
 function EditorContent() {
   const searchParams = useSearchParams();
-  const url = searchParams.get('url');
+  const urlParam = searchParams.get('url');
+  const inviteToken = searchParams.get('inviteToken');
+  const [urlFromInvite, setUrlFromInvite] = useState<string | null>(null);
+  const url = urlParam ?? urlFromInvite;
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const canvasWrapperRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState<'desktop' | 'mobile'>('desktop');
@@ -30,7 +35,13 @@ function EditorContent() {
   const [siteId, setSiteId] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [isOwner, setIsOwner] = useState(true);
+  // Caches the siteId loaded via inviteToken in guest mode.
+  // Prevents loadSiteAndComments from running the authenticated path and
+  // potentially creating a duplicate site before processSilentJoin completes.
+  const inviteSiteIdRef = useRef<string | null>(null);
   const [shareOpen, setShareOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [showWelcomeToast, setShowWelcomeToast] = useState(false);
   const [isBootstrapping, setIsBootstrapping] = useState(true);
   const [isSavingComment, setIsSavingComment] = useState(false);
   const [limitReached, setLimitReached] = useState(false);
@@ -57,6 +68,12 @@ function EditorContent() {
   }, []);
 
   useEffect(() => {
+    if (!showWelcomeToast) return;
+    const t = setTimeout(() => setShowWelcomeToast(false), 8000);
+    return () => clearTimeout(t);
+  }, [showWelcomeToast]);
+
+  useEffect(() => {
     const bootstrapAuth = async () => {
       const { data, error } = await supabase.auth.getSession();
       if (error) {
@@ -65,13 +82,8 @@ function EditorContent() {
       }
 
       const sessionUser = data.session?.user ?? null;
-      if (!sessionUser) {
-        setIsBootstrapping(false);
-        return;
-      }
-
-      setUserId(sessionUser.id);
-      if (!userName && sessionUser.email) {
+      setUserId(sessionUser?.id ?? null);
+      if (sessionUser && !userName && sessionUser.email) {
         setUserName(sessionUser.email.split('@')[0]);
       }
       setIsBootstrapping(false);
@@ -92,7 +104,69 @@ function EditorContent() {
 
   useEffect(() => {
     const loadSiteAndComments = async () => {
-      if (!url || !userId) return;
+      if (!url) return;
+
+      if (inviteToken && !userId) {
+        setIsBootstrapping(true);
+        try {
+          const res = await fetch(`/api/invite/validate?token=${encodeURIComponent(inviteToken)}`);
+          if (!res.ok) {
+            setIsBootstrapping(false);
+            return;
+          }
+          const { siteId: sid, url: siteUrl, comments: cs } = await res.json();
+          setSiteId(sid);
+          inviteSiteIdRef.current = sid; // cache to avoid race on login
+          if (siteUrl && !urlParam) setUrlFromInvite(siteUrl);
+          setComments(cs ?? []);
+          setIsOwner(false);
+          setShowWelcomeToast(true);
+        } catch {
+          setIsBootstrapping(false);
+          return;
+        }
+        setIsBootstrapping(false);
+        return;
+      }
+
+      if (!userId) return;
+
+      // Fast-path: user just logged in from guest/invite mode.
+      // processSilentJoin may still be in-flight, so skip the full lookup
+      // and just reload comments for the already-known siteId.
+      if (inviteToken && inviteSiteIdRef.current) {
+        const sid = inviteSiteIdRef.current;
+        setSiteId(sid);
+        setIsOwner(false);
+        const { data: dbComments } = await supabase
+          .from('comments')
+          .select('*')
+          .eq('site_id', sid)
+          .order('created_at', { ascending: true });
+        if (dbComments) {
+          setComments(
+            dbComments.map((item: any) => ({
+              id: item.id,
+              site_id: item.site_id,
+              position_x: item.position_x,
+              position_y: item.position_y,
+              selector: item.selector,
+              content: item.content,
+              status: item.status,
+              browser_info: item.browser_info,
+              created_by: item.created_by,
+              author_name: item.author_name,
+              comment_number: item.comment_number,
+              viewport: item.viewport,
+              created_at: item.created_at,
+              updated_at: item.updated_at,
+              timestamp: item.timestamp,
+            }))
+          );
+        }
+        setIsBootstrapping(false);
+        return;
+      }
 
       setIsBootstrapping(true);
 
@@ -187,7 +261,7 @@ function EditorContent() {
     };
 
     loadSiteAndComments();
-  }, [url, userId]);
+  }, [url, userId, inviteToken]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -214,6 +288,10 @@ function EditorContent() {
         
         setPendingClick({ x, y, selector });
         
+        if (!userId && inviteToken) {
+          setAuthModalOpen(true);
+          return;
+        }
         if (!userName) {
           setShowNameModal(true);
         } else {
@@ -224,7 +302,7 @@ function EditorContent() {
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [userName]);
+  }, [userName, userId, inviteToken]);
 
   const handleSaveName = () => {
     if (!tempUserName.trim()) {
@@ -380,7 +458,7 @@ function EditorContent() {
     }
   };
 
-  if (!url) {
+  if (!url && !inviteToken) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center">
@@ -404,7 +482,7 @@ function EditorContent() {
     );
   }
 
-  if (!userId) {
+  if (!userId && !(inviteToken && siteId)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center bg-white p-8 rounded-xl border border-gray-200 shadow-sm max-w-md">
@@ -517,6 +595,36 @@ function EditorContent() {
         />
       )}
 
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        emailOnly={!!inviteToken}
+        emailRedirectTo={inviteToken && url ? `${typeof window !== 'undefined' ? window.location.origin : ''}/auth/callback?inviteToken=${encodeURIComponent(inviteToken)}&url=${encodeURIComponent(url)}` : undefined}
+        onSuccess={async () => {
+          // Called only on successful login — NOT on X-close (see AuthModal).
+          const { data } = await supabase.auth.getSession();
+          const user = data.session?.user;
+          if (user) {
+            // Set userId immediately so handleSaveComment passes its guard.
+            setUserId(user.id);
+            if (inviteToken) {
+              await processSilentJoin(inviteToken, user.id, user.email!);
+            }
+          }
+          setAuthModalOpen(false);
+          setIsAddingComment(true);
+        }}
+      />
+
+      {showWelcomeToast && (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white max-w-md text-center animate-in fade-in duration-300"
+          style={{ backgroundColor: '#FE4004' }}
+        >
+          Você foi convidado para revisar este projeto. Clique em qualquer lugar para comentar.
+        </div>
+      )}
+
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Canvas */}
@@ -620,30 +728,34 @@ function EditorContent() {
                             {comment.status === 'open' ? 'Open' : 'Resolved'}
                           </span>
                         </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteComment(comment.id);
-                          }}
-                          className="text-gray-400 hover:text-red-500"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
+                        {userId && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteComment(comment.id);
+                            }}
+                            className="text-gray-400 hover:text-red-500"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     {comment.author_name && (
                       <p className="text-xs text-gray-500 mb-1">By {comment.author_name}</p>
                     )}
                     <p className="text-sm text-gray-800">{comment.content}</p>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        toggleCommentStatus(comment.id);
-                      }}
-                      className="mt-2 text-xs hover:underline"
-                      style={{ color: '#FE4004' }}
-                    >
-                      {comment.status === 'open' ? 'Mark as resolved' : 'Reopen'}
-                    </button>
+                    {userId && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleCommentStatus(comment.id);
+                        }}
+                        className="mt-2 text-xs hover:underline"
+                        style={{ color: '#FE4004' }}
+                      >
+                        {comment.status === 'open' ? 'Mark as resolved' : 'Reopen'}
+                      </button>
+                    )}
                     </div>
                   )}
                 </div>
@@ -856,15 +968,17 @@ function EditorContent() {
                           {comment.author_name && (
                             <p className="text-sm font-semibold text-gray-900">{comment.author_name}</p>
                           )}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              deleteComment(comment.id);
-                            }}
-                            className="text-gray-400 hover:text-red-500 ml-2"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
+                          {userId && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                deleteComment(comment.id);
+                              }}
+                              className="text-gray-400 hover:text-red-500 ml-2"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          )}
                         </div>
                         <div className="flex items-center gap-2 text-xs text-gray-500 mb-2">
                           <span>
@@ -884,19 +998,21 @@ function EditorContent() {
                           )}
                         </div>
                         <p className="text-sm text-gray-800 mb-2">{comment.content}</p>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleCommentStatus(comment.id);
-                          }}
-                          className={`text-xs px-3 py-1.5 rounded transition-colors ${
-                            comment.status === 'open' 
-                              ? 'bg-green-100 text-green-700 hover:bg-green-200' 
-                              : 'bg-red-100 text-red-700 hover:bg-red-200'
-                          }`}
-                        >
-                          {comment.status === 'open' ? 'Mark as Resolved' : 'Reopen'}
-                        </button>
+                        {userId && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleCommentStatus(comment.id);
+                            }}
+                            className={`text-xs px-3 py-1.5 rounded transition-colors ${
+                              comment.status === 'open' 
+                                ? 'bg-green-100 text-green-700 hover:bg-green-200' 
+                                : 'bg-red-100 text-red-700 hover:bg-red-200'
+                            }`}
+                          >
+                            {comment.status === 'open' ? 'Mark as Resolved' : 'Reopen'}
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>

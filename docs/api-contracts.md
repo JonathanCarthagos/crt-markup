@@ -1,6 +1,68 @@
 # API Contracts - CRT Markup
 
-## 1) HTTP Endpoint
+## 1) HTTP Endpoints
+
+## `GET /api/invite/validate?token=<inviteToken>`
+
+### Objetivo
+
+Validar `invite_token` e retornar dados do site para modo guest (Progressive Disclosure). Usa Service Role Key para bypass RLS.
+
+### Query Params
+
+- `token` (string, obrigatório): `invite_token` do share (`site_shares.invite_token`).
+
+### Respostas
+
+- `200 application/json`: `{ siteId, url, comments }` — token válido;
+- `404 application/json`: token inválido ou inexistente.
+
+### Exemplo de sucesso
+
+```json
+{
+  "siteId": "uuid",
+  "url": "https://cliente.webflow.io",
+  "comments": [{ "id": "...", "position_x": 50, ... }]
+}
+```
+
+---
+
+## `POST /api/send-invite`
+
+### Objetivo
+
+Enviar email de convite (Resend) com link para o editor. O link inclui `inviteToken` e `url` para o fluxo Progressive Disclosure.
+
+### Body (JSON)
+
+- `siteId` (string, obrigatório)
+- `guestEmail` (string, obrigatório)
+- `siteUrl` (string, obrigatório)
+- `inviteToken` (string, opcional): se ausente, a API busca em `site_shares` ou gera backfill quando `invite_token` é null.
+
+### Auth
+
+- Header `Authorization: Bearer <access_token>` (usuário dono do site).
+
+### Link gerado
+
+```
+{APP_URL}/editor?inviteToken={TOKEN}&url={encodeURIComponent(siteUrl)}
+```
+
+Se `invite_token` for null (shares antigos), a API gera um novo token e atualiza o registro via Service Role antes de enviar.
+
+### Respostas
+
+- `200`: `{ success: true, id: "..." }`
+- `400`: parâmetros ausentes ou email inválido
+- `401`: não autenticado
+- `404`: convite não encontrado (adicionar guest primeiro)
+- `503`: Resend não configurado
+
+---
 
 ## `GET /api/proxy?url=<target>`
 

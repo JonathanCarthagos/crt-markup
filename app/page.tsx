@@ -6,7 +6,6 @@ import { ArrowRight, MessageSquare, Users, Share2, Zap } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
-import { FREE_PROJECT_LIMIT } from '@/lib/constants';
 import { Auth } from '@/components/ui/auth-form-1';
 import { UserMenu } from '@/components/user-menu';
 
@@ -18,8 +17,6 @@ export default function Home() {
   const [userId, setUserId] = useState<string | null>(null);
   const [isSessionReady, setIsSessionReady] = useState(false);
   const [showAuthComponent, setShowAuthComponent] = useState(false);
-  const [projectCount, setProjectCount] = useState(0);
-  const [showLimitModal, setShowLimitModal] = useState(false);
 
   // Tracks the URL the user was trying to review when they hit "Start Review" without being logged in.
   // After login, onAuthStateChange reads this ref to redirect to the editor instead of the dashboard.
@@ -95,11 +92,6 @@ export default function Home() {
     if (!userId) {
       pendingUrlRef.current = normalizedUrl;
       setShowAuthComponent(true);
-      return;
-    }
-
-    if (projectCount >= FREE_PROJECT_LIMIT) {
-      setShowLimitModal(true);
       return;
     }
 
@@ -261,25 +253,6 @@ export default function Home() {
         </div>
       )}
 
-      {showLimitModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 w-full max-w-md mx-4 border border-gray-200 shadow-xl">
-            <h2 className="text-xl font-normal text-gray-900 mb-2" style={{ fontWeight: 400 }}>
-              Free plan limit reached
-            </h2>
-            <p className="text-sm text-gray-600 mb-4">
-              You can have up to {FREE_PROJECT_LIMIT} projects on the free plan. Upgrade to add more projects.
-            </p>
-            <button
-              type="button"
-              onClick={() => setShowLimitModal(false)}
-              className="w-full px-4 py-2 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200"
-            >
-              OK
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

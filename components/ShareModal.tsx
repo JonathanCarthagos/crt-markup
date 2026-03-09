@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { X, UserPlus, Trash2, Mail, Users } from 'lucide-react';
+import { X, UserPlus, Trash2, Mail, Users, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { listGuests, addGuest, removeGuest } from '@/actions/share';
 import { supabase } from '@/lib/supabase';
@@ -21,6 +21,7 @@ export function ShareModal({ isOpen, onClose, siteId, siteUrl }: ShareModalProps
   const [email, setEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
+  const [resendingId, setResendingId] = useState<string | null>(null);
   const [removingId, setRemovingId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -108,6 +109,7 @@ export function ShareModal({ isOpen, onClose, siteId, siteUrl }: ShareModalProps
               siteId,
               guestEmail: data.guest_email,
               siteUrl,
+              inviteToken: data.invite_token ?? undefined,
             }),
             signal: controller.signal,
           });
@@ -134,6 +136,38 @@ export function ShareModal({ isOpen, onClose, siteId, siteUrl }: ShareModalProps
       }
     } finally {
       setIsInviting(false);
+    }
+  };
+
+  const handleResendInvite = async (guest: SiteShare) => {
+    setResendingId(guest.id);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      const res = await fetch('/api/send-invite', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(session?.access_token && {
+            Authorization: `Bearer ${session.access_token}`,
+          }),
+        },
+        body: JSON.stringify({
+          siteId,
+          guestEmail: guest.guest_email,
+          siteUrl,
+          inviteToken: guest.invite_token ?? undefined,
+        }),
+      });
+      if (res.ok) {
+        toast.success(`Invite resent to ${guest.guest_email}`);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err?.error ?? 'Failed to resend invite');
+      }
+    } catch (e) {
+      toast.error('Failed to resend invite');
+    } finally {
+      setResendingId(null);
     }
   };
 
@@ -281,18 +315,32 @@ export function ShareModal({ isOpen, onClose, siteId, siteUrl }: ShareModalProps
                         </span>
                       </div>
                     </div>
-                    <button
-                      onClick={() => handleRemove(guest.id, guest.guest_email)}
-                      disabled={removingId === guest.id}
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={() => handleResendInvite(guest)}
+                        disabled={resendingId === guest.id}
+                        className="p-1.5 rounded-lg text-gray-400 hover:text-[#FE4004] hover:bg-orange-50 transition-colors disabled:opacity-50"
+                        title="Resend invite"
+                      >
+                        {resendingId === guest.id ? (
+                          <div className="w-3.5 h-3.5 animate-spin rounded-full border-b border-current" />
+                        ) : (
+                          <Send className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => handleRemove(guest.id, guest.guest_email)}
+                        disabled={removingId === guest.id}
                       className="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
                       title="Remove guest"
                     >
-                      {removingId === guest.id ? (
-                        <div className="w-3.5 h-3.5 animate-spin rounded-full border-b border-current" />
-                      ) : (
-                        <Trash2 className="w-3.5 h-3.5" />
-                      )}
-                    </button>
+                        {removingId === guest.id ? (
+                          <div className="w-3.5 h-3.5 animate-spin rounded-full border-b border-current" />
+                        ) : (
+                          <Trash2 className="w-3.5 h-3.5" />
+                        )}
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>
