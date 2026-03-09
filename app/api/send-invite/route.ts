@@ -82,11 +82,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let token = inviteToken ?? (share as { invite_token?: string }).invite_token;
+    let inviteTokenValue = inviteToken ?? (share as { invite_token?: string }).invite_token;
 
     // Backfill: shares criados antes da migration não têm invite_token.
     // Geramos um e atualizamos via admin para garantir link correto.
-    if (!token) {
+    if (!inviteTokenValue) {
       try {
         const newToken = crypto.randomUUID();
         const admin = createAdminClient();
@@ -95,14 +95,14 @@ export async function POST(request: NextRequest) {
           .update({ invite_token: newToken })
           .eq('id', share.id);
         if (!updateErr) {
-          token = newToken;
+          inviteTokenValue = newToken;
         }
       } catch (e) {
         console.warn('send-invite: failed to backfill invite_token', e);
       }
     }
 
-    const inviteLink = token
+    const inviteLink = inviteTokenValue
       ? `${appUrl}/editor?inviteToken=${encodeURIComponent(token)}&url=${encodeURIComponent(siteUrl)}`
       : appUrl;
 

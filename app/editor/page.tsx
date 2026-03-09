@@ -526,7 +526,7 @@ function EditorContent() {
     );
   }
 
-  const proxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+  const proxyUrl = `/api/proxy?url=${encodeURIComponent(url ?? '')}`;
 
   // Clamp comment modal position so it stays visible inside the canvas
   const getCommentModalStyle = (click: { x: number; y: number }): React.CSSProperties => {
