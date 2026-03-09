@@ -22,7 +22,7 @@ Este documento descreve tudo que a aplicação **CRT Markup** já faz. Use-o com
 - **Landing page** com hero, input de URL e seção de features
 - **Input de URL** para iniciar revisão: aceita URL com ou sem `https://`
 - **Login obrigatório no Start Review:** usuário não logado que clica "Start Review" → abre modal de auth; após login, redireciona para `/editor?url=...` com a URL que tentou revisar
-- **Usuário logado:** redireciona automaticamente para `/dashboard` ao acessar a home (via `router.replace`)
+- **Usuário logado:** redireciona automaticamente para `/dashboard` ao acessar a home (via `router.replace`); enquanto na home, exibe **UserMenu** (avatar, nome, link Dashboard) no header e botão "Go to Dashboard" no hero
 - **Logo** clicável: volta para home
 - **Modal de auth** (Sign In / Sign Up / Forgot Password) ao clicar em Sign In
 - **Features** exibidas: click-to-comment, colaboração em tempo real, links compartilháveis, sem setup

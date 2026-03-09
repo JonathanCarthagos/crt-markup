@@ -96,9 +96,8 @@ export function UserMenu({ showDashboardLink = true }: UserMenuProps) {
     return <span className="text-sm text-gray-400">...</span>;
   }
 
-  if (!displayName) return null;
-
-  const initials = getInitials(displayName);
+  const label = displayName ?? email?.split('@')[0] ?? 'User';
+  const initials = getInitials(label);
 
   const handleSignOut = async () => {
     await supabase.auth.signOut();
@@ -113,7 +112,7 @@ export function UserMenu({ showDashboardLink = true }: UserMenuProps) {
           {avatarUrl ? (
             <img
               src={avatarUrl}
-              alt={displayName}
+              alt={label}
               className="w-8 h-8 rounded-full object-cover"
               referrerPolicy="no-referrer"
             />
@@ -126,7 +125,7 @@ export function UserMenu({ showDashboardLink = true }: UserMenuProps) {
             </div>
           )}
           <span className="text-sm font-medium text-gray-700 hidden sm:inline">
-            {displayName}
+            {label}
           </span>
         </button>
       </DropdownMenuTrigger>
@@ -134,7 +133,7 @@ export function UserMenu({ showDashboardLink = true }: UserMenuProps) {
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuLabel className="font-normal">
           <div className="flex flex-col space-y-1">
-            <p className="text-sm font-medium text-gray-900">{displayName}</p>
+            <p className="text-sm font-medium text-gray-900">{label}</p>
             {email && (
               <p className="text-xs text-gray-500 truncate">{email}</p>
             )}

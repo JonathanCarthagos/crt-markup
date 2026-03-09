@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ArrowRight, MessageSquare, Users, Share2, Zap } from 'lucide-react';
+import { ArrowRight, MessageSquare, Users, Share2, Zap, LayoutDashboard } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { supabase } from '@/lib/supabase';
@@ -124,10 +124,10 @@ export default function Home() {
             />
             <h1 className="text-2xl font-normal" style={{ color: '#FE4004', fontWeight: 400 }}>CRT Markup</h1>
           </Link>
-          {!isSessionReady ? (
+          {!isSessionReady && !userId ? (
             <span className="text-sm text-gray-400">...</span>
           ) : userId ? (
-            <UserMenu />
+            <UserMenu showDashboardLink />
           ) : (
             <button
               onClick={() => setShowAuthComponent(true)}
@@ -148,6 +148,18 @@ export default function Home() {
         <p className="text-xl text-gray-600 mb-12 max-w-2xl mx-auto">
           A collaborative space for agencies and clients. Collect precise feedback directly on the live site without the chaos.
         </p>
+
+        {/* Logged-in: quick link to dashboard */}
+        {userId && (
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-lg font-medium mb-8 transition-opacity hover:opacity-90 text-white"
+            style={{ backgroundColor: '#FE4004' }}
+          >
+            <LayoutDashboard className="w-5 h-5" />
+            Go to Dashboard
+          </Link>
+        )}
 
         {/* URL Input Form */}
         <form onSubmit={handleSubmit} className="max-w-2xl mx-auto mb-6">
@@ -187,13 +199,18 @@ export default function Home() {
           </div>
         </form>
 
-        <p className="text-sm text-gray-500">
-          Sign in once and keep all your comments synced.{' '}
-          <button onClick={() => setShowAuthComponent(true)} className="underline hover:opacity-80 transition-opacity" style={{ color: '#FE4004' }}>
-            Sign in
-          </button>{' '}
-          to start.
-        </p>
+        {!userId && (
+          <p className="text-sm text-gray-500 flex items-center justify-center gap-2 flex-wrap">
+            Sign in once and keep all your comments synced.
+            <button
+              onClick={() => setShowAuthComponent(true)}
+              className="px-4 py-2 rounded-lg font-medium text-sm text-white hover:opacity-90 transition-opacity"
+              style={{ backgroundColor: '#FE4004' }}
+            >
+              Sign in
+            </button>
+          </p>
+        )}
       </section>
 
       {/* Features Section */}
