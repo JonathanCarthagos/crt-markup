@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
     }
 
     const inviteLink = inviteTokenValue
-      ? `${appUrl}/editor?inviteToken=${encodeURIComponent(token)}&url=${encodeURIComponent(siteUrl)}`
+      ? `${appUrl}/editor?inviteToken=${encodeURIComponent(inviteTokenValue)}&url=${encodeURIComponent(siteUrl)}`
       : appUrl;
 
     const inviterName =
@@ -125,7 +125,7 @@ export async function POST(request: NextRequest) {
             <strong>${inviterName}</strong> has invited you to collaborate on a project in CRT Markup.
           </p>
           <p style="color: #444; line-height: 1.6;">
-            Sign in or create an account to view the project and leave feedback.
+            Click the link below to view the project. You can sign in when you're ready to leave feedback.
           </p>
           <p style="margin: 24px 0;">
             <a

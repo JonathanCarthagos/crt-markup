@@ -104,9 +104,15 @@ function EditorContent() {
 
   useEffect(() => {
     const loadSiteAndComments = async () => {
-      if (!url) return;
+      // Guest com inviteToken: pode rodar mesmo sem url (API retorna a url do site)
+      if (!url && !(inviteToken && !userId)) return;
 
       if (inviteToken && !userId) {
+        // Já carregamos via invite? Evita refetch redundante.
+        if (inviteSiteIdRef.current) {
+          setIsBootstrapping(false);
+          return;
+        }
         setIsBootstrapping(true);
         try {
           const res = await fetch(`/api/invite/validate?token=${encodeURIComponent(inviteToken)}`);

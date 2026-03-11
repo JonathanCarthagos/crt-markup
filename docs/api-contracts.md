@@ -33,7 +33,7 @@ Validar `invite_token` e retornar dados do site para modo guest (Progressive Dis
 
 ### Objetivo
 
-Enviar email de convite (Resend) com link para o editor. O link inclui `inviteToken` e `url` para o fluxo Progressive Disclosure.
+Enviar email de convite (Resend) com link para o editor. O link inclui `inviteToken` e `url` para o fluxo Progressive Disclosure. O guest vê o projeto primeiro (sem login); o cadastro é solicitado apenas ao clicar para comentar.
 
 ### Body (JSON)
 
